@@ -24,6 +24,7 @@
 #include <deque>
 #include <filesystem>
 #include <future>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
@@ -150,6 +151,135 @@ static MeshData loadMeshWithAssimp(const std::string& mesh_file, const Eigen::Ve
     }
 
     return out;
+}
+
+static std::string meshCacheKey(const std::string& mesh_file, const Eigen::Vector3d& scale);
+
+static bool writeMeshCache(const std::string& cache_file, const MeshData& mesh) {
+    std::ofstream os(cache_file, std::ios::binary | std::ios::trunc);
+    if (!os.good()) {
+        return false;
+    }
+
+    const uint32_t magic = 0x4D534831;
+    const uint32_t version = 1;
+    const uint64_t v_count = static_cast<uint64_t>(mesh.vertices.size());
+    const uint64_t n_count = static_cast<uint64_t>(mesh.normals.size());
+    const uint64_t t_count = static_cast<uint64_t>(mesh.triangles.size());
+
+    os.write(reinterpret_cast<const char*>(&magic), sizeof(magic));
+    os.write(reinterpret_cast<const char*>(&version), sizeof(version));
+    os.write(reinterpret_cast<const char*>(&v_count), sizeof(v_count));
+    os.write(reinterpret_cast<const char*>(&n_count), sizeof(n_count));
+    os.write(reinterpret_cast<const char*>(&t_count), sizeof(t_count));
+
+    if (v_count > 0) {
+        os.write(
+            reinterpret_cast<const char*>(mesh.vertices.data()),
+            static_cast<std::streamsize>(v_count * sizeof(Eigen::Vector3f)));
+    }
+    if (n_count > 0) {
+        os.write(
+            reinterpret_cast<const char*>(mesh.normals.data()),
+            static_cast<std::streamsize>(n_count * sizeof(Eigen::Vector3f)));
+    }
+    if (t_count > 0) {
+        os.write(
+            reinterpret_cast<const char*>(mesh.triangles.data()),
+            static_cast<std::streamsize>(t_count * sizeof(Eigen::Vector3i)));
+    }
+    return os.good();
+}
+
+static bool readMeshCache(const std::string& cache_file, MeshData* out) {
+    if (!out) {
+        return false;
+    }
+    std::ifstream is(cache_file, std::ios::binary);
+    if (!is.good()) {
+        return false;
+    }
+
+    uint32_t magic = 0;
+    uint32_t version = 0;
+    uint64_t v_count = 0;
+    uint64_t n_count = 0;
+    uint64_t t_count = 0;
+
+    is.read(reinterpret_cast<char*>(&magic), sizeof(magic));
+    is.read(reinterpret_cast<char*>(&version), sizeof(version));
+    is.read(reinterpret_cast<char*>(&v_count), sizeof(v_count));
+    is.read(reinterpret_cast<char*>(&n_count), sizeof(n_count));
+    is.read(reinterpret_cast<char*>(&t_count), sizeof(t_count));
+
+    if (!is.good() || magic != 0x4D534831 || version != 1) {
+        return false;
+    }
+
+    MeshData mesh;
+    mesh.vertices.resize(static_cast<size_t>(v_count));
+    mesh.normals.resize(static_cast<size_t>(n_count));
+    mesh.triangles.resize(static_cast<size_t>(t_count));
+
+    if (v_count > 0) {
+        is.read(
+            reinterpret_cast<char*>(mesh.vertices.data()),
+            static_cast<std::streamsize>(v_count * sizeof(Eigen::Vector3f)));
+    }
+    if (n_count > 0) {
+        is.read(
+            reinterpret_cast<char*>(mesh.normals.data()),
+            static_cast<std::streamsize>(n_count * sizeof(Eigen::Vector3f)));
+    }
+    if (t_count > 0) {
+        is.read(
+            reinterpret_cast<char*>(mesh.triangles.data()),
+            static_cast<std::streamsize>(t_count * sizeof(Eigen::Vector3i)));
+    }
+    if (!is.good() || mesh.vertices.empty() || mesh.triangles.empty()) {
+        return false;
+    }
+
+    *out = std::move(mesh);
+    return true;
+}
+
+static std::string meshCacheFilePath(const std::string& mesh_file, const Eigen::Vector3d& scale) {
+    const std::string key = meshCacheKey(mesh_file, scale);
+    const auto key_hash = std::hash<std::string>{}(key);
+    const fs::path cache_dir = fs::path("/tmp") / "rerun_mesh_cache";
+    return (cache_dir / (std::to_string(key_hash) + ".bin")).string();
+}
+
+static MeshData loadMeshWithCache(const std::string& mesh_file, const Eigen::Vector3d& scale) {
+    const std::string cache_file = meshCacheFilePath(mesh_file, scale);
+    const fs::path cache_path(cache_file);
+    const fs::path mesh_path(mesh_file);
+
+    try {
+        fs::create_directories(cache_path.parent_path());
+    } catch (...) {
+    }
+
+    bool cache_valid = false;
+    try {
+        if (fs::exists(cache_path) && fs::exists(mesh_path)) {
+            cache_valid = fs::last_write_time(cache_path) >= fs::last_write_time(mesh_path);
+        }
+    } catch (...) {
+        cache_valid = false;
+    }
+
+    if (cache_valid) {
+        MeshData cached;
+        if (readMeshCache(cache_file, &cached)) {
+            return cached;
+        }
+    }
+
+    MeshData loaded = loadMeshWithAssimp(mesh_file, scale);
+    (void)writeMeshCache(cache_file, loaded);
+    return loaded;
 }
 
 static std::string meshCacheKey(const std::string& mesh_file, const Eigen::Vector3d& scale) {
@@ -294,7 +424,7 @@ static std::vector<VisualInstance> loadVisualsFromUrdf(
         const auto scale = unique_meshes[i].scale;
 
         in_flight.emplace_back(i, std::async(std::launch::async, [mesh_path, scale]() {
-                                   return loadMeshWithAssimp(mesh_path, scale);
+                                   return loadMeshWithCache(mesh_path, scale);
                                }));
 
         if (in_flight.size() >= max_workers) {

@@ -1,4 +1,4 @@
-# 🤖✨ research_on_rerun
+# 🤖✨ rerun-robotics-cpp
 
 把机器人状态“演”出来，不只是“算”出来。  
 Rerun Viewer 里看见轨迹、误差、速度、结构变化，一眼知道系统在干什么 🔥
@@ -83,7 +83,30 @@ cmake --build build -j4
 
 ## 🧩 Dependencies
 
-`rerun_sdk` / `Eigen3` / `assimp` / `pinocchio`
+`rerun_sdk` / `Eigen3` / `assimp` / `pinocchio` / `urdfdom`
+
+其中 `urdfdom` 使用：
+- `urdfdom_model`
+- `urdfdom_world`
+- `urdfdom_sensor`
+
+## 🚀 Mesh Load Cache
+
+为减少重复启动时的 mesh 加载耗时，`rerun_cpp_demo` 和 `rerun_showcase_demo` 都启用了本地磁盘缓存：
+
+- 缓存目录：`/tmp/rerun_mesh_cache`
+- 缓存 key：`mesh_path + scale`
+- 失效策略：当原 mesh 文件修改时间晚于缓存文件时自动重建缓存
+
+实际效果（同一模型，首次冷启动 vs 再次热启动）：
+- `rerun_cpp_demo`：`~1.5s` -> `~0.1s`
+- `rerun_showcase_demo`：`~1.9s` -> `~0.04s`
+
+如果需要清空缓存重新测试冷启动：
+
+```bash
+rm -rf /tmp/rerun_mesh_cache
+```
 
 > 注意：URDF 与 mesh 路径当前为本地路径，迁移运行时需要改路径。
 
