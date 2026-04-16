@@ -1,7 +1,7 @@
 BasedOnStyle: Google
 
 # Make it slightly more similar to Rust.
-# Based loosely on https://gist.github.com/YodaEmbedding/c2c77dc693d11f373489f9a6eea4
+# Based loosely on https://gist.github.com/YodaEmbedding/c2c77dc693d11f3734d78489f9a6eea4
 AccessModifierOffset: -2
 AlignAfterOpenBracket: AlwaysBreak
 AllowAllArgumentsOnNextLine: false
@@ -31,4 +31,4 @@ SpacesBeforeTrailingComments: 1
 # Don't change include blocks, we want to control this manually.
 # Sorting headers however is allowed as all our headers should be standalone.
 IncludeBlocks: Preserve
-SortIncludes: true
+SortIncludes: CaseInsensitive
